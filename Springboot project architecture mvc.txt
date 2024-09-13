@@ -1,0 +1,16 @@
+Springboot preject atrchitecture
+
+Rest - controller
+Repo - repository - database acess, connected with db
+service interface - method declaration
+serviceImpl - implementation
+
+service -  
+
+controller -> service -> serviceImpl -> repo
+
+
+
+Person
+
+entity - 

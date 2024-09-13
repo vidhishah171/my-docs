@@ -1,0 +1,20 @@
+Sample text
+
+
+https://www.youtube.com/watch?v=Ip2TA2ijDmA
+https://www.youtube.com/watch?v=xrglM8U0Zv8&list=PLinedj3B30sDby4Al-i13hQJGQoRQDfPo&index=19
+https://hub.docker.com/_/amazoncorretto
+https://github.com/corretto/corretto-docker/blob/cdcc44b8859544a47ce8c64ed0b3cc051a8c58c8/17/jdk/al2023/Dockerfile
+
+
+Why do we need springboot instead of java
+
+
+docker ps -a: for status checking
+docker logs {containerId}: for checking logs
+
+docker system prune -f --all : jenkins full
+
+sudo service postgresql restart
+
+sudo find /var/lib/docker/containers/ -type f -name "*.log" -delete : logs delete

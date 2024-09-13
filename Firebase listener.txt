@@ -1,0 +1,47 @@
+              private TaskCompletionSource<DataSnapshot> dbSource = new TaskCompletionSource<>();
+              private Task dbTask = dbSource.getTask();
+              https://stackoverflow.com/questions/33203379/setting-singleton-property-value-in-firebase-listener
+              // during onCreate:
+              DatabaseReference ref = FirebaseDatabase.getInstance().getReference("/data/of/interest");
+              ref.addListenerForSingleValueEvent(new ValueEventListener() {
+                 @Override
+                 public void onDataChange(DataSnapshot dataSnapshot) {
+                    dbSource.setResult(dataSnapshot);
+                 }
+                 @Override
+                 public void onCancelled(DatabaseError databaseError) {
+                    dbSource.setException(databaseError.toException());
+                 }
+              });  
+              databaseReference.child(DashboardConstants.LAST_UPDATED_DATE)
+                  .addListenerForSingleValueEvent(new ValueEventListener() {
+
+                    @Override
+                    public void onDataChange(DataSnapshot dataSnapshot) {
+
+                      // Code
+                      dataSnapshot.getValue();
+                      for (DataSnapshot child : dataSnapshot.getChildren()) {
+                        String x = child.getKey();
+                        System.out.println(x);
+                      }
+                    }
+
+                    @Override
+                    public void onCancelled(DatabaseError databaseError) {
+
+                      // Code
+                    }
+                  });
+				  
+				  
+          DatabaseReference databaseReference =
+              this.firebaseDatabase.getReference(this.firebaseEnv.getDatabase()
+                  .getCollection()
+                  .getHubSpot() + "/" + TenantContext.getId());				  
+				  
+              databaseReference.child(DashboardConstants.LAST_UPDATED_DATE)
+                  .setValue(ErpDateUtil.stringFormatedDate(currentTime,
+                      DashboardConstants.UTC_DATE_TIME_FORMAT, TimeZone.getDefault()
+                          .getDisplayName()),
+                      null);				  

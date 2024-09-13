@@ -1,0 +1,48 @@
+		<!-- For Generating the API spec and documentation -->
+		<dependency>
+			<groupId>io.springfox</groupId>
+			<artifactId>springfox-swagger2</artifactId>
+			<version>${swagger.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>io.springfox</groupId>
+			<artifactId>springfox-swagger-ui</artifactId>
+			<version>${swagger.version}</version>
+		</dependency>
+
+		<!--@Author: Vidhi Commented springfox data rest depndency till the springfox 
+			dependency is changed in Jfrog -->
+		<dependency>
+			<groupId>io.springfox</groupId>
+			<artifactId>springfox-data-rest</artifactId>
+			<version>${swagger.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>io.github.swagger2markup</groupId>
+			<artifactId>swagger2markup</artifactId>
+			<version>${swagger2markup.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>javax.mail</groupId>
+					<artifactId>mailapi</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>io.github.swagger2markup</groupId>
+			<artifactId>swagger2markup-spring-restdocs-ext</artifactId>
+			<version>${swagger2markup.version}</version>
+			<scope>test</scope>
+		</dependency>
+		
+		
+		
+		
+		"/v2/api-docs",
+            "/swagger-resources/configuration/ui", "/configuration/ui", "/swagger-resources",
+            "/swagger-resources/**", "/configuration/**", "/api-docs",
+            "/auth/swagger-ui-custom.html", "/api-docs.yaml", "/api/v3/api-docs",
+            "/swagger-ui.html", "/swagger-ui/index.html", "/swagger-ui-custom.html",
+            "/swagger-ui/**", "/webjars/**"         

@@ -1,0 +1,15 @@
+parent child component
+service: 
+custom directives
+custom pipe
+api integration
+modules
+routing
+parent child routing
+observable and subject
+forms
+template driven form, reactive form
+ngModelChange
+lifecycle
+shared components
+form array, form group: 

@@ -1,0 +1,11 @@
+Apache Kafka
+
+It is like a communication system that helps different parts of a computer system exchange data by publishing and subscribing to topics.
+
+Sender  ----- Publish --->   Apache Kafka   ---- Receive ---->  Receiver1
+                                           <---- Subscribe ---        
+										   
+                                           <---- Subscribe --- Receiver2
+										   
+										   <---- Subscribe --- Receiver3
+                                           

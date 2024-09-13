@@ -1,0 +1,12 @@
+Cloud firestore
+
+A flexible scalable noql could database where it stores and syncs your data for server and client side development.
+flexible to use
+expressive queries to individual and specific or all the documents, sorting and filtering. Indexed by default. Query performance is proportional to the size of result set.
+Realtime updates: data synchronization
+
+
+NodeJs Programming Course ➡️ http://bit.ly/2GPg7gA ⚫️ http://bit.ly/2GQYTQ2
+Jenkins Course For Developers and DevOps ➡️ http://bit.ly/2Wd4l4W ⚫️ http://bit.ly/2J1B1ug
+
+AWS Certification Training - http://bit.ly/2kmLtTu | http://bit.ly/2lAkQL1

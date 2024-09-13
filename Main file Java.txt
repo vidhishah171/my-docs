@@ -1,0 +1,186 @@
+package com.mrps.udsreportingservice;
+
+// <<<<<<< HEAD
+// import com.mrps.core.constants.MrpsConstant;
+// import com.mrps.udsreportingservice.config.TenantContext;
+// import lombok.extern.slf4j.Slf4j;
+// import org.apache.commons.lang3.StringUtils;
+// import org.springframework.beans.BeansException;
+// =======
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletResponse;
+
+// >>>>>>> dev
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.security.oauth2.client.OAuth2RestOperations;
+
+// <<<<<<< HEAD
+// import javax.persistence.EntityManager;
+// import javax.persistence.PersistenceContext;
+// import javax.servlet.*;
+// import javax.servlet.http.HttpServletRequest;
+// import javax.servlet.http.HttpServletResponse;
+// import javax.sql.DataSource;
+//
+// import java.io.IOException;
+// import java.io.UnsupportedEncodingException;
+// import java.net.URLEncoder;
+// import java.nio.charset.StandardCharsets;
+// import java.sql.Connection;
+// import java.sql.SQLException;
+// import java.util.Map;
+// =======
+import com.mrps.core.constants.MrpsConstant;
+// >>>>>>> dev
+
+import lombok.extern.slf4j.Slf4j;
+
+@SpringBootApplication(
+    exclude = {DataSourceAutoConfiguration.class, HibernateJpaAutoConfiguration.class})
+@EnableScheduling
+@ComponentScan({"com.mrps"})
+@EnableJpaRepositories({"com.mrps"})
+@EntityScan({"com.mrps"})
+// @PropertySource(name = "props", value = {"classpath:application.yml", "classpath:resource.json"})
+@EnableJpaAuditing
+@Slf4j
+public class UdsReportingServiceApplication {
+
+  @Autowired
+  OAuth2RestOperations restOperations;
+
+  public static void main(String[] args) {
+
+    ConfigurableApplicationContext test =
+        SpringApplication.run(UdsReportingServiceApplication.class, args);
+  }
+
+  public static String getParamsString(Map<String, String> params)
+      throws UnsupportedEncodingException {
+
+    StringBuilder result = new StringBuilder();
+    for (Map.Entry<String, String> entry : params.entrySet()) {
+      result.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8));
+      result.append("=");
+      result.append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+      result.append("&");
+    }
+    String resultString = result.toString();
+    return resultString.length() > 0 ? resultString.substring(0, resultString.length() - 1)
+        : resultString;
+  }
+
+  @Bean
+  @Primary
+  public Filter corsFilter() {
+
+    return new Filter() {
+
+      @Override
+      public void doFilter(final ServletRequest req, final ServletResponse res,
+          final FilterChain chain) throws IOException, ServletException {
+
+        // final HttpServletResponse response = (HttpServletResponse) res;
+        // response.setHeader("Access-Control-Allow-Origin", "*");
+        // response.setHeader("Access-Control-Allow-Credentials", "true");
+        // response.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE,
+        // PUT,PATCH");
+        // response.setHeader("Access-Control-Max-Age", "3600");
+        // response.setHeader("Access-Control-Allow-Headers",
+        // "Content-Type, Accept, X-Requested-With, remember-me, Authorization, Content-Encoding,
+        // authority, sec-fetch-dest, sec-fetch-site, sec-fetch-mode,x_tenant,enctype,tenant");
+        // response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        // long time = System.currentTimeMillis();
+        // try {
+        // // x_tenant check.
+        // final HttpServletRequest request = (HttpServletRequest) req;
+        // log.debug("Method requested is {} and URI is {}", request.getMethod(),
+        // request.getRequestURI());
+        // if (!request.getMethod().equalsIgnoreCase(HttpMethod.OPTIONS.name())
+        // && !request.getRequestURI().contains("actuator")
+        // && !request.getRequestURI().contains("swagger") &&
+        // !request.getRequestURI().contains("v2")
+        // && !request.getRequestURI().contains("img") &&
+        // !request.getRequestURI().contains("crons")) {
+        // String tenantId = request.getHeader(MrpsConstant.X_TENANT);
+        // log.debug("Request is done by tenant {}, for {} API.", tenantId,
+        // request.getRequestURI());
+        // if (StringUtils.isEmpty(tenantId)) {
+        // /*
+        // * In case of public ip header will not contain x_tenant, In that case x_tenant
+        // * will be in parameter.
+        // */
+        // tenantId = request.getParameter(MrpsConstant.X_TENANT);
+        // /*
+        // * If tenantId is null then send validation exception as tenantId is mandatory
+        // * to resolve DB in multi-tanent system.
+        // */
+        // if (StringUtils.isEmpty(tenantId)) {
+        // log.error("Tenant Id is null for {} API", request.getRequestURI());
+        // response.getWriter().write("Tenant is mandatory for any request.");
+        // return;
+        // }
+        // }
+        // TenantContext.setTenantId(tenantId);
+        // } else {
+        // log.debug("Api called is {} and http method is {}", request.getRequestURI(),
+        // request.getMethod());
+        // /*
+        // * Kubernets uses /health api to check JAR health. which internally uses
+        // * database health check, therefore setting default tenant which will be same
+        // * for all environment (DEV,QA,STAGING and PROD).
+        // */
+        // TenantContext.setTenantId("DEFAULT");
+        // }
+        // chain.doFilter(req, res);
+        // } finally {
+        // time = System.currentTimeMillis() - time;
+        // log.debug("Time taken by method {}: {} ms ", ((HttpServletRequest) req).getRequestURI(),
+        // time);
+        // }
+        // }
+        // };
+        // }
+        final HttpServletResponse response = (HttpServletResponse) res;
+        response.setHeader(MrpsConstant.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+        response.setHeader(MrpsConstant.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+        response.setHeader(MrpsConstant.ACCESS_CONTROL_ALLOW_METHODS,
+            "POST, GET, OPTIONS, DELETE, PUT,PATCH");
+        response.setHeader("Access-Control-Max-Age", "3600");
+        response.setHeader("Access-Control-Allow-Headers",
+            "Content-Type, Accept, X-Requested-With, remember-me, Authorization, Content-Encoding, authority, sec-fetch-dest, sec-fetch-site, sec-fetch-mode,x_tenant,enctype,tenant,Host,Accept-Encoding,Connection,Referer,User-Agent");
+        response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        long time = System.currentTimeMillis();
+        try {
+          chain.doFilter(req, res);
+          System.out.println("Response filtering");
+        } finally {
+          time = System.currentTimeMillis() - time;
+          System.out.println("Time taken by method {}: {} ms " + time);
+        }
+      }
+    };
+  }
+}

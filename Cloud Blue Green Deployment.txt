@@ -1,0 +1,37 @@
+Cloud:
+
+Group of computers on a network.
+
+combination of multiple servers.
+elastic cloud computing: expands on your requirement
+
+IAAS: don't want to manage the hardwares
+
+IAAS gives last two:
+functions | application | runtime and containers | Operating systems and management tools | networking, storage and servers | data centers
+
+CAAS gives you last 3.
+
+PAAS gives you last 4.
+
+Serverless computing: 
+
+FAAS gives you last 5.
+
+SAAS: gives you all. gmail
+
+private cloud for your own company
+hybrid cloud, some in private some in public
+
+Deployment Strategy
+Blue Green Deployment
+one is blue server, one will be green server
+blue is running normally with 2.5v, all the users are using it.
+
+green instance is idle. v2.5, update green and gradually move all users to green. now both the instances are live
+and once everyone is moved, blue can go idle.
+Maybe use it as recovery server if something goes wrong.
+now if green environment is running smoothly, you can update blue instance v3.0.
+And the process continuous.
+both has the shared database.
+

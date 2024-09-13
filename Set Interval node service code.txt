@@ -1,0 +1,167 @@
+
+exports.downloadBook = async (req, res) => {
+    try {
+        const book = await Book.findById(req.params.id);
+        if(!book) return res.status(404).send('Book not found');
+        book.downloads += 1;
+        book.dailyDownloads += 1;
+        book.weeklyDownloads += 1;
+        book.monthlyDownloads += 1;
+
+        const department = await Department.findOne({name: book.department});
+        if (department) {
+            department.downloads += 1;
+            await department.save();
+        } else {
+            console.log('No department found with name: ' + book.department);
+            return res.status(404).send('No department: ' + book.department +' found for the Book: ' + book.id);
+        }
+        await book.save();
+        res.status(200).send('Download recorded for the Book: '+ req.params.id);
+    } catch(error) {
+        console.log('Unable to download the book due to: ' + error.message);
+        res.status(500).send('Unable to download the book due to: ' + error.message);
+    }
+};
+
+
+
+
+// async function updateLeastDownloadedBooks() {
+//     try {
+//         console.log('Inside update Least Downloaded Books.')
+//         const leastDownloadedBooks = await Download.aggregate([
+//             { $group: { _id: '$bookId', downloads: { $sum: 1 } } },
+//             { $sort: { downloads: 1 } },
+//             { $limit: 1 }
+//         ]);
+
+//         const today = new Date();
+
+//         for (const bookData of leastDownloadedBooks) {
+//             const book = await Book.findById(bookData._id);
+
+//             if (book) {
+//                 // Check if the book was in the least downloaded list yesterday
+//                 if (book.lastLeastDownloadedDate && (today - book.lastLeastDownloadedDate) / (1000 * 60 * 60 * 24) <= 1) {
+//                     book.leastDownloadedDays += 1;
+//                 } else {
+//                     book.leastDownloadedDays = 1;  // Reset to 1 since it's a new streak
+//                 }
+
+//                 book.lastLeastDownloadedDate = today;
+
+//                 // If the book has been in the least downloaded list for 14 consecutive days, remove it
+//                 if (book.leastDownloadedDays >= 14) {
+//                     await Download.deleteMany({ bookId: book._id });
+//                     await Book.findByIdAndDelete(book._id);
+//                     console.log(`Removed book: ${book.title} and its downloads with Book Id: ${book._id})`);
+//                 } else {
+//                     await book.save();
+//                 }
+//             }
+//         }
+//     } catch (error) {
+//         console.error('Error updating least downloaded books:', error.message);
+//     }
+// }
+
+
+
+router.post('/:id/download', downloadBook);
+
+
+
+
+
+
+rankingService
+
+
+const Book = require('../models/Book');
+const Department = require('../models/Department');
+const cron = require('node-cron');
+
+// Helper function to reset daily, weekly, and monthly downloads
+async function resetDailyDownloads() {
+    await Book.updateMany({}, { dailyDownloads: 0 });
+}
+
+async function resetWeeklyDownloads() {
+    await Book.updateMany({}, { weeklyDownloads: 0 });
+    const departments = await Department.find({}).sort({weeklyDownloads: -1}).limit(1);
+    departments[0].lastWeekWinner = true;
+    departments[0].save();
+    await Department.updateMany({}, { weeklyDownloads: 0 });
+
+}
+
+async function resetMonthlyDownloads() {
+    await Book.updateMany({}, { monthlyDownloads: 0 });
+}
+
+
+const updateRankings = async () => {
+    const departments = await Department.find().sort({downloads: -1});
+    departments.forEach((dept, index) => {
+        dept.rankDaily = index + 1;
+        dept.save();
+    });
+
+    const weeklyBooks = await Book.find().sort({downloadsWeekly: -1});
+    weeklyBooks.forEach((book, index) => {
+        book.rankWeekly = index + 1;
+        book.save();
+    });
+
+    const monthlyBooks = await Book.find().sort({downloadsMonthly: -1});
+    monthlyBooks.forEach((book, index) => {
+        book.rankMonthly = index + 1;
+        book.save();
+    });
+
+}
+
+setInterval(updateRankings, 24*60*60*1000); // every day 24 hours
+
+
+const updateTrendingBooks = async () => {
+    const books = await Book.find().sort({downloadsDaily: -1}).limit(10);
+    books.forEach((book, index) => {
+        book.rankDaily = index + 1;
+        book.save();
+    });
+}
+
+setInterval(updateTrendingBooks, 60*60*1000); //every hour
+
+
+const removeLeastReadBooks = async () => {
+    const books = await Book.find().sort({downloads: 1}).limit(10);
+    books.forEach((book, index) => {
+        if(book.leastReadWeeks >= 2) {
+            book.deleteOne();
+        } else {
+            book.leastReadWeeks++;
+            book.save();
+        }
+    });
+}
+
+setInterval(removeLeastReadBooks, 7*24*60*60*1000);
+
+// Scheduler to run the ranking updates
+// Reset daily downloads at midnight
+cron.schedule('0 0 * * *', async () => {
+    await resetDailyDownloads();
+});
+
+// Reset weekly downloads at midnight on Sunday (first day of the week)
+cron.schedule('0 0 * * 0', async () => {
+    await resetWeeklyDownloads();
+});
+
+// Reset monthly downloads at midnight on the first day of the month
+cron.schedule('0 0 1 * *', async () => {
+    await resetMonthlyDownloads();
+});

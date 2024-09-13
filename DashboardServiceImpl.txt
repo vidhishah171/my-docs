@@ -1,0 +1,1267 @@
+package com.mps.books.service.impl;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.text.ParseException;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.bson.Document;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoOperations;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
+import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
+import org.springframework.data.mongodb.core.aggregation.AggregationOptions;
+import org.springframework.stereotype.Service;
+
+import com.mps.books.config.CustomAuditorAware;
+import com.mps.books.config.datasource.TenantContext;
+import com.mps.books.constants.BooksServiceConstant;
+import com.mps.books.core.MpsObjectMapper;
+import com.mps.books.core.util.LF;
+import com.mps.books.exceptions.DashboardException;
+import com.mps.books.model.Metadata;
+import com.mps.books.model.base.DataObject;
+import com.mps.books.model.config.custom.DataType;
+import com.mps.books.model.constants.DashboardConstants;
+import com.mps.books.model.constants.FrequencyUnit;
+import com.mps.books.model.dashboard.DashboardChart;
+import com.mps.books.model.dashboard.DashboardChartType;
+import com.mps.books.model.dashboard.DashboardElement;
+import com.mps.books.model.dashboard.DashboardElementForChart;
+import com.mps.books.model.dashboard.DashboardElementType;
+import com.mps.books.model.dashboard.DashboardResponse;
+import com.mps.books.model.dashboard.DateRangeType;
+import com.mps.books.model.dashboard.InvoiceAgingTable;
+import com.mps.books.model.query.CountBo;
+import com.mps.books.model.query.CustomAggregation;
+import com.mps.books.model.query.MatchMode;
+import com.mps.books.model.reports.bo.DbrefInfo;
+import com.mps.books.model.reports.bo.FilterCondition;
+import com.mps.books.model.reports.bo.FilterType;
+import com.mps.books.model.reports.bo.ReportFilter;
+import com.mps.books.model.reports.bo.ReportFilterMetadata;
+import com.mps.books.repository.DashboardChartRepo;
+import com.mps.books.repository.DashboardElementRepo;
+import com.mps.books.repository.DashboardResponseRepo;
+import com.mps.books.service.DashboardService;
+import com.mps.books.service.InvoiceService;
+import com.mps.books.service.ReportAggregationService;
+import com.mps.books.util.ErpDateUtil;
+import com.opencsv.CSVWriter;
+
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * Project mps-books-service
+ * 
+ * @author Vidhi_s
+ * @version 1.0
+ * @date Sep 22, 2023
+ */
+@Service
+@Slf4j
+public class DashboardServiceImpl implements DashboardService {
+
+  @Autowired
+  private MongoOperations mongoOperations;
+
+  @Autowired
+  private ReportAggregationService aggregationService;
+
+  @Autowired
+  private DashboardChartRepo dashboardChartRepo;
+
+  @Autowired
+  private DashboardElementRepo dashboardElementRepo;
+
+  @Autowired
+  private DashboardResponseRepo dashboardResponseRepo;
+
+  @Autowired
+  private ApplicationEventPublisher appEventPub;
+
+  @Autowired
+  private InvoiceService invoiceService;
+
+  @Autowired
+  @Qualifier("auditorProvider")
+  private CustomAuditorAware<String> mpsSecurityAuditAware;
+
+  @Override
+  public Map<String, Object> executeDashboardCharts() throws DashboardException {
+
+    log.info(LF.format("Inside execute Dashboard Charts method.", TenantContext.getId()));
+    List<DashboardChart> dashboardCharts = this.dashboardChartRepo.findAllByActiveTrue();
+    if (CollectionUtils.isEmpty(dashboardCharts)) {
+      throw new DashboardException("No charts are available to display.");
+    }
+    Map<String, Object> chartResultMap = new HashMap<>();
+    for (DashboardChart dashboardChart : dashboardCharts) {
+      try {
+        Map<String, Object> resultMap = this.executeChart(dashboardChart, null);
+        if (dashboardChart.getType()
+            .equals(DashboardChartType.TABLE)
+            && Objects.nonNull(resultMap.get(dashboardChart.getName()))) {
+          chartResultMap.put(dashboardChart.getId(), resultMap.get(dashboardChart.getName()));
+        } else {
+          chartResultMap.put(dashboardChart.getId(), resultMap);
+        }
+      } catch (ParseException | DashboardException e) {
+        log.error(LF.format(e.getMessage(), TenantContext.getId()));
+      }
+    }
+    // this.generateCsvFailedTransaction(chartResultMap.get("Invoice status Chart"));
+    return chartResultMap;
+  }
+
+  @Override
+  public DashboardResponse previewChart(DashboardChart dashboardChart, Pageable pageable)
+      throws DashboardException, ParseException {
+
+    if (Objects.isNull(dashboardChart)) {
+      throw new DashboardException("Dashboard Chart must not be null.");
+    }
+    log.info(LF.format("Inside Preview Chart method of Dashboard for chart Id: {}.",
+        TenantContext.getId()), dashboardChart.getId());
+    DashboardResponse responseObj = new DashboardResponse();
+    Metadata metadata = new Metadata();
+    responseObj.setId(dashboardChart.getId());
+    responseObj.setCreatedDate(new Date());
+    responseObj.setCreatedBy(this.mpsSecurityAuditAware.getCurrentAuditor()
+        .orElse("SYSTEM"));
+    Map<String, Object> resultMap = this.executeChart(dashboardChart, pageable);
+    Object chartData = dashboardChart.getType()
+        .equals(DashboardChartType.TABLE) ? resultMap.get(dashboardChart.getName()) : resultMap;
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.TABLE) && Objects.nonNull(chartData)
+        && resultMap.containsKey(DashboardConstants.TOTAL_ELEMENTS)) {
+      metadata.put(DashboardConstants.TOTAL_ELEMENTS,
+          resultMap.get(DashboardConstants.TOTAL_ELEMENTS));
+    }
+    responseObj.setData(chartData);
+    responseObj.setError(false);
+    responseObj.setErrorMsg(null);
+    responseObj.setLastUpdatedDate(new Date());
+    responseObj.setMetadata(metadata);
+    return responseObj;
+  }
+
+  @Override
+  public Map<String, Object> executeChart(DashboardChart dashboardChart, Pageable pageable)
+      throws DashboardException, ParseException {
+
+    log.info(LF.format("Executing dashboard Chart with Id: {}.", TenantContext.getId()),
+        dashboardChart.getId());
+    Map<String, Object> elementResultMap = new LinkedHashMap<>();
+    Set<String> elementIds = dashboardChart.getElements()
+        .stream()
+        .map(DashboardElementForChart::getId)
+        .collect(Collectors.toSet());
+    if (CollectionUtils.isEmpty(elementIds)) {
+      throw new DashboardException(
+          "No elements are present for the chart Id: " + dashboardChart.getId());
+    }
+    List<DashboardElement> elements;
+    if (dashboardChart.isStatic()) {
+      if (StringUtils.equals(dashboardChart.getName(), DashboardConstants.INVOICE_AGING)) {
+        elements = this.dashboardElementRepo.findByActiveTrueAndIsPrimaryTrueAndIdIn(elementIds);
+        this.validateDashboardElementsByChart(elements, dashboardChart);
+        this.executeStaticInvoiceAgingChart(dashboardChart, elements, elementResultMap);
+      } else if (StringUtils.equals(dashboardChart.getName(),
+          DashboardConstants.INVOICE_AR_AGING)) {
+        List<InvoiceAgingTable> resultList =
+            this.invoiceService.executeInvoiceARAgingTable(elementResultMap, pageable);
+        elementResultMap.put(dashboardChart.getName(), resultList);
+      } else {
+        throw new DashboardException("Static chart with name: " + dashboardChart.getName()
+            + " and Id: " + dashboardChart.getId() + " is not defined.");
+      }
+    } else {
+      elements = this.dashboardElementRepo.findByActiveTrueAndIdIn(elementIds);
+      this.validateDashboardElementsByChart(elements, dashboardChart);
+      this.executeDynamicCharts(dashboardChart, elements, elementResultMap, pageable);
+    }
+    return elementResultMap;
+  }
+
+  /**
+   * @author Vidhi_s Method used to execute the chart per element.
+   * 
+   * @param dashboardChart
+   * @param element
+   * @param elementResultMap
+   * @param pageable
+   * @throws DashboardException
+   * @throws ParseException
+   */
+  private void executeByElement(DashboardChart dashboardChart, DashboardElement element,
+      Map<String, Object> elementResultMap, Pageable pageable)
+      throws DashboardException, ParseException {
+
+    if (Objects.isNull(element)) {
+      throw new DashboardException(
+          "Unable to find element in the chart with Id: " + dashboardChart.getId());
+    }
+    DashboardElementForChart selectedElement =
+        this.findSelectedElementFromChart(dashboardChart, element);
+    List<AggregationOperation> aggregationPipeline = this.buildAggregationPipeline(element, this
+        .buildAdditionalOperationsByChartType(dashboardChart, selectedElement, element, pageable));
+    log.info("Successfully build the aggregation pipeline for element Id: {}.", element.getId());
+    long totalElementCountForTable = 0;
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.TABLE)) {
+      if (Objects.nonNull(pageable)) {
+        totalElementCountForTable =
+            this.getTotalElementCountsForTable(aggregationPipeline, element.getCollectionName());
+        aggregationPipeline
+            .add(Aggregation.skip((long) pageable.getPageNumber() * pageable.getPageSize()));
+        aggregationPipeline.add(Aggregation.limit(pageable.getPageSize()));
+      }
+    }
+    // creating an aggregation.
+    Aggregation aggregation = buildAggregation(aggregationPipeline);
+    List<Document> result =
+        this.mongoOperations.aggregate(aggregation, element.getCollectionName(), Document.class)
+            .getMappedResults();
+    this.buildResponseAfterAggregation(dashboardChart, result, element.getId(),
+        new DataObject(selectedElement.getDisplayName(), element.getName()), elementResultMap,
+        totalElementCountForTable);
+    System.out.println(elementResultMap);
+  }
+
+  /**
+   * @author Vidhi_s Method to get total element counts for the Table chart.
+   * 
+   * @param aggregationPipeline
+   * @param collectionName
+   * @return
+   */
+  private long getTotalElementCountsForTable(List<AggregationOperation> aggregationPipeline,
+      String collectionName) {
+
+    try {
+      List<AggregationOperation> aggregationPipelineForCount =
+          new ArrayList<AggregationOperation>(aggregationPipeline);
+      aggregationPipelineForCount
+          .add(CustomAggregation.group(new Document().append(BooksServiceConstant.ID, null)
+              .append("count", new Document("$sum", 1))));
+      Aggregation aggregation = buildAggregation(aggregationPipelineForCount);
+      CountBo result = this.mongoOperations.aggregate(aggregation, collectionName, CountBo.class)
+          .getUniqueMappedResult();
+      if (Objects.nonNull(result) && Objects.nonNull(result.getCount())) {
+        return result.getCount();
+      }
+    } catch (Exception e) {
+      log.error(LF.format("Unabled to get the total count of Table chart.", TenantContext.getId()));
+    }
+    return 0;
+  }
+
+  /**
+   * @author Vidhi_s Method to execute static Invoice Aging chart. Static logic is written for this
+   *         chart.
+   * 
+   * @param dashboardChart
+   * @param elements
+   * @param elementResultMap
+   * @throws DashboardException
+   * @throws ParseException
+   */
+  private void executeStaticInvoiceAgingChart(DashboardChart dashboardChart,
+      List<DashboardElement> elements, Map<String, Object> elementResultMap)
+      throws DashboardException, ParseException {
+
+    // dashboardChart.setType(DashboardChartType.PIE);
+    int i = 1;
+    LocalDate currentDate = LocalDate.now();
+    List<LocalDate> customDates = new ArrayList<>();
+    for (i = 1; i <= 6; i++) {
+      customDates.clear();
+      customDates.add(currentDate.minusDays(i * 30));
+      customDates.add(currentDate.minusDays((i - 1) * 30 + (i == 1 ? 0 : 1)));
+      dashboardChart.setCustomDuration(customDates);
+      elements.get(0)
+          .setName(((i - 1) * 30 + (i == 1 ? 0 : 1)) + " to " + (i * 30) + " days");
+      elements.get(0)
+          .getElementFilters()
+          .removeIf(
+              filter -> Objects.nonNull(filter.getFilter()) && StringUtils.equals(filter.getFilter()
+                  .getLabel(), DashboardConstants.DURATION_FILTER));
+      this.executeByElement(dashboardChart, elements.get(0), elementResultMap, null);
+    }
+    customDates.clear();
+    customDates.add(LocalDate.ofEpochDay(0));
+    customDates.add(currentDate.minusDays(181));
+    dashboardChart.setCustomDuration(customDates);
+    elements.get(0)
+        .setName("180+ days");
+    elements.get(0)
+        .getElementFilters()
+        .removeIf(
+            filter -> Objects.nonNull(filter.getFilter()) && StringUtils.equals(filter.getFilter()
+                .getLabel(), DashboardConstants.DURATION_FILTER));
+    this.executeByElement(dashboardChart, elements.get(0), elementResultMap, null);
+  }
+
+  /**
+   * @author Vidhi_s Method to execute the charts dynamically by elements.
+   * 
+   * @param dashboardChart
+   * @param elements
+   * @param elementResultMap
+   * @param pageable
+   * @throws DashboardException
+   * @throws ParseException
+   */
+  private void executeDynamicCharts(DashboardChart dashboardChart, List<DashboardElement> elements,
+      Map<String, Object> elementResultMap, Pageable pageable)
+      throws DashboardException, ParseException {
+
+    if (!dashboardChart.getType()
+        .equals(DashboardChartType.DASHLET)) {
+      this.setDurationToChartByChartType(dashboardChart);
+    }
+    List<DataObject> fieldsToFilter = new ArrayList<>();
+    List<DataObject> fieldsToProject = new ArrayList<>();
+    Map<String, Object> fieldDataType = new HashMap<>();
+    List<ReportFilter> mergedFilters = new ArrayList<>();
+    for (DashboardElement element : elements) {
+      if (dashboardChart.getType()
+          .equals(DashboardChartType.TABLE)) {
+        fieldsToFilter.addAll(element.getFieldsToFilter());
+        DashboardElementForChart selectedElement =
+            this.findSelectedElementFromChart(dashboardChart, element);
+        element.getFieldToProject()
+            .get(0)
+            .setName(selectedElement.getDisplayName());
+        fieldDataType.put(element.getFieldToProject()
+            .get(0)
+            .getValue(), element.getDataType());
+        fieldsToProject.addAll(element.getFieldToProject());
+        mergedFilters.addAll(element.getElementFilters());
+      } else {
+        this.executeByElement(dashboardChart, element, elementResultMap, null);
+      }
+    }
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.TABLE)) {
+      DashboardElement tableElement = elements.get(0);
+      tableElement.setFieldToProject(fieldsToProject);
+      tableElement.setElementFilters(mergedFilters);
+      tableElement.setFieldsToFilter(fieldsToFilter);
+      tableElement.setLabels(fieldDataType);
+      this.executeByElement(dashboardChart, tableElement, elementResultMap, pageable);
+    }
+  }
+
+  /**
+   * @author Vidhi_s To build the additional type conversion, duration add, sorting aggregation
+   *         operations by chart type.
+   * 
+   * @param dashboardChart
+   * @param selectedElement
+   * @param element
+   * @param pageable
+   * @return
+   * @throws DashboardException
+   */
+  private List<AggregationOperation> buildAdditionalOperationsByChartType(
+      DashboardChart dashboardChart, DashboardElementForChart selectedElement,
+      DashboardElement element, Pageable pageable) throws DashboardException {
+
+    List<AggregationOperation> aggregationOperations = new ArrayList<>();
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.DASHLET)) {
+      aggregationOperations = this.buildGroupingOperationForDashlets(element);
+    } else {
+      DataObject durationField = this.getFieldToFilterDuration(dashboardChart, selectedElement);
+      this.addDurationFilterToElement(dashboardChart, element, durationField);
+      if (dashboardChart.getType()
+          .equals(DashboardChartType.PIE)) {
+        aggregationOperations = this.buildGroupingOperationForDashlets(element);
+      } else if (dashboardChart.getType()
+          .equals(DashboardChartType.TABLE)) {
+        aggregationOperations.add(Aggregation.sort(Sort.Direction.DESC, BooksServiceConstant.ID));
+        if (element.getFieldToProject()
+            .stream()
+            .map(DataObject::getValue)
+            .distinct()
+            .count() != element.getFieldToProject()
+                .size()) {
+          throw new DashboardException(
+              "Unable to execute the chart as duplicate fields are used in the elements.");
+        }
+        /** Add the projection operation in aggregation pipeline. */
+        for (DataObject field : element.getFieldToProject()) {
+          if (DashboardConstants.MISMATCHED_DATE_FIELDS.contains(field.getValue())) {
+            aggregationOperations.add(this.aggregationService.buildAddFieldOperation(
+                new DbrefInfo(null, field.getValue(), null, null, null),
+                ReportAggregationServiceImpl.TO_DATE));
+          }
+          if (element.getLabels()
+              .containsKey(field.getValue())
+              && DataType.NUMBER.equals(element.getLabels()
+                  .get(field.getValue()))) {
+            if (!DashboardConstants.MISMATCHED_NUMBER_FIELDS.contains(field.getValue())) {
+              aggregationOperations.add(this.aggregationService.buildAddFieldOperation(
+                  new DbrefInfo(null, field.getValue(), null, null, null),
+                  ReportAggregationServiceImpl.ROUND));
+            }
+            aggregationOperations.add(this.aggregationService.buildAddFieldOperation(
+                new DbrefInfo(null, field.getValue(), null, null, null),
+                ReportAggregationServiceImpl.TO_DOUBLE));
+          }
+          if (element.getLabels()
+              .containsKey(field.getValue())
+              && DataType.DATE.equals(element.getLabels()
+                  .get(field.getValue()))) {
+            aggregationOperations.add(this.aggregationService.buildAddFieldOperation(
+                new DbrefInfo(null, field.getValue(), null, null, null),
+                ReportAggregationServiceImpl.DATE_TO_STRING));
+          }
+        }
+        aggregationOperations.add(
+            aggregationService.buildProjectionOperationForDashboard(element.getFieldToProject()));
+        if (Objects.nonNull(pageable) && pageable.getSort()
+            .isSorted()) {
+          aggregationOperations.add(Aggregation.sort(pageable.getSort()));
+        }
+      } else {
+        String resultField = element.getType()
+            .equals(DashboardElementType.COUNT) ? null
+                : element.getFieldToProject()
+                    .get(0)
+                    .getValue();
+        aggregationOperations = aggregationService.buildGroupingOperationByDateRange(
+            this.getGroupingTypeByDaysDifference(dashboardChart.getCustomDuration(),
+                dashboardChart.getDurationType()),
+            element.getType(), resultField, durationField.getValue());
+      }
+    }
+    return aggregationOperations;
+  }
+
+  /**
+   * @param element
+   * @return
+   * @throws DashboardException
+   */
+  private List<AggregationOperation> buildGroupingOperationForDashlets(DashboardElement element)
+      throws DashboardException {
+
+    List<AggregationOperation> groupingOperations = new ArrayList<>();
+    if (element.getType()
+        .equals(DashboardElementType.COUNT)) {
+      groupingOperations.add(Aggregation.count()
+          .as(DashboardConstants.VALUE));
+    } else if (element.getType()
+        .equals(DashboardElementType.SUM)) {
+      if (DashboardConstants.MISMATCHED_NUMBER_FIELDS.contains(element.getFieldToProject()
+          .get(0)
+          .getValue())) {
+        groupingOperations.add(this.aggregationService.buildAddFieldOperation(new DbrefInfo(null,
+            element.getFieldToProject()
+                .get(0)
+                .getValue(),
+            null, null, null), ReportAggregationServiceImpl.TO_DECIMAL));
+      }
+      groupingOperations.add(Aggregation.group()
+          .sum(element.getFieldToProject()
+              .get(0)
+              .getValue())
+          .as(DashboardConstants.VALUE));
+      groupingOperations.add(this.aggregationService.buildAddFieldOperation(
+          new DbrefInfo(null, DashboardConstants.VALUE, null, null, null),
+          ReportAggregationServiceImpl.ROUND));
+      groupingOperations.add(this.aggregationService.buildAddFieldOperation(
+          new DbrefInfo(null, DashboardConstants.VALUE, null, null, null), "ToString"));
+    } else {
+      throw new DashboardException(
+          "Element Type: " + element.getType() + " must not be added to the Chart type: Dashlet.");
+    }
+    return groupingOperations;
+  }
+
+  /**
+   * @param elements
+   * @param chart
+   * @throws DashboardException
+   */
+  private void validateDashboardElementsByChart(List<DashboardElement> elements,
+      DashboardChart chart) throws DashboardException {
+
+    if (CollectionUtils.isEmpty(elements)) {
+      throw new DashboardException(
+          "Unable to find any elements for the chart Id: " + chart.getId());
+    }
+    for (DashboardElement element : elements) {
+      if (!chart.getType()
+          .equals(DashboardChartType.PIE)
+          && !StringUtils.equals(element.getCollectionName(), elements.get(0)
+              .getCollectionName())) {
+        throw new DashboardException(
+            "All elements for the chart Id: " + chart.getId() + " must have the same Module.");
+      }
+      if (!chart.getType()
+          .equals(DashboardChartType.TABLE)
+          && !element.getDataType()
+              .equals(DataType.NUMBER)) {
+        throw new DashboardException(
+            "Element datatype must be Number when the chart type is Bar/Line/Pie/Dashlet for the Chart Id: "
+                + chart.getId() + " And Element Id: " + element.getId());
+      }
+      if (!element.getSelectedChartTypes()
+          .contains(chart.getType())) {
+        throw new DashboardException(
+            "Element is not activated for the Chart type: " + chart.getType() + " with Id: "
+                + chart.getId() + " And Element Id: " + element.getId());
+      }
+      if ((element.getType()
+          .equals(DashboardElementType.SUM)
+          || element.getType()
+              .equals(DashboardElementType.DATA))
+          && (CollectionUtils.isEmpty(element.getFieldToProject())
+              || Objects.isNull(element.getFieldToProject()
+                  .get(0))
+              || StringUtils.isAnyBlank(element.getFieldToProject()
+                  .get(0)
+                  .getName(),
+                  element.getFieldToProject()
+                      .get(0)
+                      .getValue()))) {
+        throw new DashboardException(
+            "Projection field must not be blank when element type is Sum/Data for element Id: "
+                + element.getId());
+      }
+    }
+  }
+
+  /**
+   * If chart type is Line/Bar: We check minValue field: if it is not null then add minValue +
+   * duration as To Date. Else we'll set current date - duration as From Date here, after that we'll
+   * add filter to element and aggregate and group by duration filter.
+   * 
+   * 
+   * If chart type is Pie: We'll get the field to filter duration on from the element and add the
+   * filter to the element. Here We need data like pending invoices: 15, approved: 20. no need to
+   * aggregate. Add filters directly in the elements.
+   * 
+   * If the chart type is Table: We'll get the field to filter duration on from the element and
+   * merge all the filters for the selected elements in the chart using AND.
+   * 
+   * This method should not be called for Dashlets.
+   * 
+   * @param chart
+   * @return
+   * @throws DashboardException
+   */
+  private ReportFilter addDurationFilterToElement(DashboardChart dashboardChart,
+      DashboardElement element, DataObject durationField) throws DashboardException {
+
+    ReportFilter durationFilter = new ReportFilter();
+    durationFilter.setCondition(FilterCondition.AND);
+    durationFilter.setFilterType(FilterType.PARENT);
+    ReportFilterMetadata filterMetadata = new ReportFilterMetadata();
+    element.getFieldsToFilter()
+        .add(durationField);
+    filterMetadata.setField(durationField.getValue());
+    filterMetadata.setLabel(DashboardConstants.DURATION_FILTER);
+    if (DashboardConstants.MISMATCHED_DATE_FIELDS.contains(durationField.getValue())) {
+      filterMetadata.setMatchMode(MatchMode.BETWEEN);
+      filterMetadata.setValue(this.getDateStrings(dashboardChart.getCustomDuration(), true));
+    } else {
+      filterMetadata.setMatchMode(MatchMode.DATE_BETWEEN_PERIOD);
+      filterMetadata.setValue(this.getDateStrings(dashboardChart.getCustomDuration(), false));
+    }
+    durationFilter.setFilter(filterMetadata);
+    element.getElementFilters()
+        .add(durationFilter);
+    return durationFilter;
+  }
+
+  /**
+   * @author Vidhi_s This method finds the selected element from the chart by the element object id.
+   * 
+   * @param chart
+   * @param element
+   * @return
+   * @throws DashboardException
+   */
+  private DashboardElementForChart findSelectedElementFromChart(DashboardChart chart,
+      DashboardElement element) throws DashboardException {
+
+    DashboardElementForChart selectedElement = chart.getElements()
+        .stream()
+        .filter(dashboardElement -> StringUtils.equals(element.getId(), dashboardElement.getId()))
+        .findFirst()
+        .orElse(null);
+    if (Objects.isNull(selectedElement)) {
+      throw new DashboardException("Unable to find the selected Element for the chart Id: "
+          + chart.getId() + " And element Id: " + element.getId());
+    }
+    return selectedElement;
+  }
+
+  /**
+   * @author Vidhi_s
+   * 
+   *         This method is used to get the field to filter duration on from the chart or element by
+   *         its chart type. For Chart type Line/Bar: We'll get the field from XAxisConfig. For Pie
+   *         and Table charts: We'll get the field from the selected element.
+   * 
+   * @param chart
+   * @param selectedElement
+   * @return
+   * @throws DashboardException
+   */
+  private DataObject getFieldToFilterDuration(DashboardChart chart,
+      DashboardElementForChart selectedElement) throws DashboardException {
+
+    switch (chart.getType()) {
+      case LINE:
+      case BAR:
+        if (StringUtils.isBlank(chart.getXAxisConfig()
+            .getField()
+            .getValue())) {
+          throw new DashboardException(
+              "Date field to filter duration must not be null for the chart Id: " + chart.getId());
+        }
+        return chart.getXAxisConfig()
+            .getField();
+      case TABLE:
+        if (CollectionUtils.isEmpty(chart.getElements()) || Objects.isNull(chart.getElements()
+            .get(0)) || StringUtils.isBlank(
+                chart.getElements()
+                    .get(0)
+                    .getDurationField()
+                    .getValue())) {
+          throw new DashboardException(
+              "Date field to filter duration must not be null for the chart Id: " + chart.getId());
+        }
+        return chart.getElements()
+            .get(0)
+            .getDurationField();
+      case PIE:
+        if (Objects.isNull(selectedElement)
+            || StringUtils.isBlank(selectedElement.getDurationField()
+                .getValue())) {
+          throw new DashboardException(
+              "Date field to filter duration must not be null for the chart Id: " + chart.getId()
+                  + " and Element: " + selectedElement.getDisplayName());
+        }
+        return selectedElement.getDurationField();
+      default:
+        throw new DashboardException(
+            "Date Filter should not be applied to Chart type: " + chart.getType() + ".");
+    }
+  }
+
+  /**
+   * @author Vidhi_s This method sets the duration by the chart type.
+   * 
+   * @param chart
+   * @throws DashboardException
+   */
+  private void setDurationToChartByChartType(DashboardChart chart) throws DashboardException {
+
+    if (Objects.isNull(chart.getDurationType()) || Objects.isNull(chart.getType())) {
+      throw new DashboardException(
+          "Please specify chart Type or default duration type for the chart Id: " + chart.getId());
+    }
+    if (chart.getType()
+        .equals(DashboardChartType.LINE)
+        || chart.getType()
+            .equals(DashboardChartType.BAR)) {
+      if (Objects.nonNull(chart.getXAxisConfig()
+          .getMinValue())) {
+        LocalDate currentDate = LocalDate.parse(chart.getXAxisConfig()
+            .getMinValue()
+            .toString());
+        this.setDurationForChart(chart, currentDate, false);
+      } else {
+        this.setDurationForChart(chart, LocalDate.now(), true);
+      }
+    } else if (chart.getType()
+        .equals(DashboardChartType.PIE)
+        || chart.getType()
+            .equals(DashboardChartType.TABLE)) {
+      this.setDurationForChart(chart, LocalDate.now(), true);
+    }
+  }
+
+  /**
+   * @author Vidhi_s This method sets the default duration of the chart according to the duration
+   *         type.
+   * 
+   * @param chart
+   * @param currentDate
+   * @param isBackwards: if MinDate is present, then the flag is false else true.
+   * @throws DashboardException
+   */
+  private void setDurationForChart(DashboardChart chart, LocalDate currentDate, boolean isBackwards)
+      throws DashboardException {
+
+    List<LocalDate> dates = new ArrayList<>();
+    if (!isBackwards && !chart.getDurationType()
+        .equals(DateRangeType.CUSTOM)) {
+      dates.add(currentDate);
+    }
+    switch (chart.getDurationType()) {
+      case MONTH:
+        dates.add(currentDate.withDayOfMonth(isBackwards ? 1 : currentDate.lengthOfMonth()));
+        break;
+      case QUARTER:
+        int currentQuarter = (currentDate.getMonthValue() - 1) / 3;
+        if (isBackwards) {
+          dates.add(LocalDate.of(currentDate.getYear(), currentQuarter * 3 + 1, 1));
+        } else {
+          currentQuarter++;
+          dates.add(LocalDate.of(currentDate.getYear(), currentQuarter * 3, 1)
+              .plusMonths(1)
+              .minusDays(1));
+        }
+        break;
+      case HALF_YEAR:
+        int currentHalfYear = (currentDate.getMonthValue() - 1) / 6;
+        if (isBackwards) {
+          dates.add(LocalDate.of(currentDate.getYear(), currentHalfYear * 6 + 1, 1));
+        } else {
+          currentHalfYear++;
+          dates.add(LocalDate.of(currentDate.getYear(), currentHalfYear * 6, 1)
+              .plusMonths(1)
+              .minusDays(1));
+        }
+        break;
+      case YEAR:
+        if (isBackwards) {
+          dates.add(currentDate.withMonth(1)
+              .withDayOfMonth(1));
+        } else {
+          dates.add(currentDate.withMonth(12)
+              .withDayOfMonth(31));
+        }
+        break;
+      case CUSTOM:
+        if (CollectionUtils.isEmpty(chart.getCustomDuration()) || chart.getCustomDuration()
+            .size() != 2) {
+          throw new DashboardException(
+              "Please specify custom duration for the chart Id: " + chart.getId());
+        }
+        break;
+      default:
+        throw new DashboardException(
+            "Please specify proper default duration type for the chart Id: " + chart.getId());
+    }
+    if (!chart.getDurationType()
+        .equals(DateRangeType.CUSTOM)) {
+      if (isBackwards) {
+        dates.add(currentDate);
+      }
+      chart.setCustomDuration(dates);
+    }
+  }
+
+  /**
+   * @author Vidhi_s to build the aggregation pipeline for the element.
+   * 
+   * @param element
+   * @return
+   * @throws ParseException
+   * @throws DashboardException
+   */
+  public List<AggregationOperation> buildAggregationPipeline(DashboardElement element,
+      List<AggregationOperation> groupingOperations) throws ParseException, DashboardException {
+
+    List<AggregationOperation> aggregationPipeline = new ArrayList<>();
+    /** Check the embedded List<Object> before match operation for fields to filter. */
+    Set<String> embeddedBeforeMatch = getEmbeddedFields(element.getFieldsToFilter());
+    if (!CollectionUtils.isEmpty(embeddedBeforeMatch))
+      /** Add unwind operation in aggregation pipeline. */
+      aggregationPipeline.addAll(addEmbeddedOperations(embeddedBeforeMatch));
+    /**
+     * For Match operation in aggregation pipeline.
+     */
+    if (!CollectionUtils.isEmpty(element.getElementFilters())) {
+      /** Add the Match operation in aggregation pipeline. */
+      aggregationPipeline.add(aggregationService.buildMatchOperation(element.getElementFilters()));
+      log.info("Successfully build the match operation in aggregation pipeline.");
+    }
+    /**
+     * Check the embedded List<Object> before projection operation for fields for projection.
+     */
+    Set<String> embeddedBeforeProjection =
+        getEmbeddedBeforeProjection(element.getFieldToProject(), embeddedBeforeMatch);
+    if (!CollectionUtils.isEmpty(embeddedBeforeProjection))
+      /** Add unwind operation in aggregation pipeline. */
+      aggregationPipeline.addAll(addEmbeddedOperations(embeddedBeforeProjection));
+    log.info("Successfully build the projection operation in aggregation pipeline.");
+    /** Add grouping and other Operations to pipeline. */
+    aggregationPipeline.addAll(groupingOperations);
+    /** return the aggregation pipeline for requested report. */
+    return aggregationPipeline;
+  }
+
+  /**
+   * @author Vidhi_s This method returns the grouping type by the days difference especially when
+   *         Custom duration type is selected.
+   * 
+   * @param dates
+   * @param duration
+   * @return
+   * @throws DashboardException
+   */
+  private String getGroupingTypeByDaysDifference(List<LocalDate> dates, DateRangeType duration)
+      throws DashboardException {
+
+    if (CollectionUtils.isEmpty(dates) || dates.size() != 2 || Objects.isNull(dates.get(0))
+        || Objects.isNull(dates.get(1))) {
+      throw new DashboardException("Dates to filter duration must be valid.");
+    }
+    switch (duration) {
+      case MONTH:
+        return FrequencyUnit.DAYS;
+      case QUARTER:
+      case HALF_YEAR:
+      case YEAR:
+        return FrequencyUnit.MONTH_C;
+      case CUSTOM:
+        int daysBetween = (int) ChronoUnit.DAYS.between(dates.get(0), dates.get(1));
+        if (daysBetween >= 0 && daysBetween <= 30) {
+          return FrequencyUnit.DAYS;
+        } else if (daysBetween > 30 && daysBetween <= 365) {
+          return FrequencyUnit.MONTH_C;
+        } else if (daysBetween > 365 && daysBetween <= 3650) {
+          return FrequencyUnit.YEAR_C;
+        } else {
+          throw new DashboardException(
+              "Custom duration days difference must be between 0 to 3650 days.");
+        }
+      default:
+        throw new DashboardException("Duration type: " + duration + " is not valid.");
+    }
+  }
+
+  /**
+   * @author Vidhi_s To build the response after the aggregation query result using the chart type
+   *         and element name.
+   * 
+   * @param dashboardChart
+   * @param result
+   * @param elementId
+   * @param elementName
+   * @param elementResultMap
+   * @throws DashboardException
+   */
+  private void buildResponseAfterAggregation(DashboardChart dashboardChart, List<Document> result,
+      String elementId, DataObject elementName, Map<String, Object> elementResultMap,
+      long totalElementCountForTable) throws DashboardException {
+
+    Map<String, Object> resultValue = new HashMap<String, Object>();
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.TABLE)) {
+      List<Map<String, Object>> resultMapList = new ArrayList<>();
+      if (CollectionUtils.isNotEmpty(result)) {
+        for (Document document : result) {
+          if (Objects.nonNull(document)) {
+            Map<String, Object> resultMap = new HashMap<>();
+            for (String key : document.keySet()) {
+              resultMap.put(key, document.get(key));
+            }
+            dashboardChart.getElements()
+                .forEach(element -> resultMap.putIfAbsent(element.getDisplayName(), null));
+            resultMapList.add(resultMap);
+          }
+        }
+      } else {
+        Map<String, Object> resultMap = new HashMap<>();
+        dashboardChart.getElements()
+            .forEach(element -> resultMap.putIfAbsent(element.getDisplayName(), null));
+        resultMapList.add(resultMap);
+      }
+      if (totalElementCountForTable != 0) {
+        elementResultMap.put(DashboardConstants.TOTAL_ELEMENTS, totalElementCountForTable);
+      }
+      elementResultMap.put(dashboardChart.getName(), resultMapList);
+    } else if (dashboardChart.getType()
+        .equals(DashboardChartType.DASHLET)
+        || dashboardChart.getType()
+            .equals(DashboardChartType.PIE)) {
+      Object resultValueObject;
+      if (CollectionUtils.isEmpty(result) || Objects.isNull(result.get(0))
+          || Objects.isNull(result.get(0)
+              .get(DashboardConstants.VALUE))) {
+        resultValueObject = 0;
+        // throw new DashboardException("Unable to get data for Chart Id: " + dashboardChart.getId()
+        // + " and Element Id: " + elementId);
+      } else {
+        resultValueObject = result.get(0)
+            .get(DashboardConstants.VALUE);
+      }
+      if (dashboardChart.isStatic()
+          && StringUtils.equals(dashboardChart.getName(), DashboardConstants.INVOICE_AGING)) {
+        elementResultMap.put(elementName.getValue(), resultValueObject);
+      } else {
+        elementResultMap.put(elementName.getName(), resultValueObject);
+      }
+    } else {
+      resultValue = result.stream()
+          .filter(document -> StringUtils.isNotBlank(document.getString(DashboardConstants.ID)))
+          .collect(
+              Collectors
+                  .toMap(
+                      document -> StringUtils.defaultIfBlank(
+                          document.getString(DashboardConstants.ID), elementName.getName()),
+                      document -> document.get(DashboardConstants.VALUE)));
+      this.addXAxisLabelsToResponse(dashboardChart, resultValue);
+      elementResultMap.put(elementName.getName(), resultValue);
+    }
+    if (dashboardChart.getType()
+        .equals(DashboardChartType.LINE)
+        || dashboardChart.getType()
+            .equals(DashboardChartType.BAR)) {
+      elementResultMap.put(elementName.getName(), resultValue);
+    }
+  }
+
+  /**
+   * @author Vidhi_s Method to add all the X axis labels to the response if it's not present by
+   *         duration.
+   * 
+   * @param dashboardChart
+   * @param resultValue
+   * @throws DashboardException
+   */
+  private void addXAxisLabelsToResponse(DashboardChart dashboardChart,
+      Map<String, Object> resultValue) throws DashboardException {
+
+    String groupingType = this.getGroupingTypeByDaysDifference(dashboardChart.getCustomDuration(),
+        dashboardChart.getDurationType());
+    LocalDate startDate = dashboardChart.getCustomDuration()
+        .get(0);
+    LocalDate endDate = dashboardChart.getCustomDuration()
+        .get(1);
+    DateTimeFormatter formatter;
+    if (StringUtils.equals(groupingType, FrequencyUnit.DAYS)) {
+      formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+      LocalDate currentDate = startDate;
+      /** Iterate over the date range and add dates with 0 values to the map. */
+      while (!currentDate.isAfter(endDate)) {
+        String currentDateKey = currentDate.format(formatter);
+        /** Check if the date is not already present in the map. */
+        if (!resultValue.containsKey(currentDateKey)) {
+          /** Add the date with a value of 0. */
+          resultValue.put(currentDateKey, 0);
+        }
+        /** Move to the next date. */
+        currentDate = currentDate.plusDays(1);
+      }
+    } else if (StringUtils.equals(groupingType, FrequencyUnit.MONTH_C)) {
+      formatter = DateTimeFormatter.ofPattern("MM/yyyy");
+      LocalDate currentMonth = startDate.withDayOfMonth(1);
+      /** Set to the first day of the month. */
+      /** Iterate over the months and add months with 0 values to the map. */
+      while (!currentMonth.isAfter(endDate)) {
+        String currentMonthKey = formatter.format(currentMonth);
+        /** Check if the month is not already present in the map. */
+        if (!resultValue.containsKey(currentMonthKey)) {
+          /** Add the month with a value of 0. */
+          resultValue.put(currentMonthKey, 0);
+        }
+        /** Move to the next month. */
+        currentMonth = currentMonth.plusMonths(1);
+      }
+    } else if (StringUtils.equals(groupingType, FrequencyUnit.YEAR_C)) {
+      formatter = DateTimeFormatter.ofPattern("yyyy");
+      LocalDate currentYear = startDate.withDayOfYear(1);
+      while (!currentYear.isAfter(endDate)) {
+        String currentYearKey = formatter.format(currentYear);
+        if (!resultValue.containsKey(currentYearKey)) {
+          resultValue.put(currentYearKey, 0);
+        }
+        currentYear = currentYear.plusYears(1);
+      }
+    }
+    System.out.println(resultValue);
+  }
+
+  /**
+   * To Unwind the List<Object> embedded object for aggregation pipeline.
+   * 
+   * @param embeddedBeforeMatch
+   * @return
+   */
+  private Collection<? extends AggregationOperation> addEmbeddedOperations(
+      Set<String> embeddedBeforeMatch) {
+
+    List<AggregationOperation> embeddedOperations = new ArrayList<>();
+    for (String fieldName : embeddedBeforeMatch) {
+      embeddedOperations.add(aggregationService.buildUnwindOperation(fieldName));
+    }
+    return embeddedOperations;
+  }
+
+  /**
+   * To get the name of fields which is embedded List<Object>'s fields before projection.
+   * 
+   * @param projectionFields
+   * @param embeddedBeforeMatch
+   * @return
+   */
+  private Set<String> getEmbeddedBeforeProjection(List<DataObject> projectionFields,
+      Set<String> embeddedBeforeMatch) {
+
+    Set<String> embeddedBeforeProjection = getEmbeddedFields(projectionFields);
+    if (embeddedBeforeProjection.removeAll(embeddedBeforeMatch))
+      return embeddedBeforeProjection;
+    return embeddedBeforeProjection;
+  }
+
+  /**
+   * To get the name of fields which is embedded List<Object>'s fields for aggregation pipeline.
+   * 
+   * @param fields
+   * @return
+   */
+  private Set<String> getEmbeddedFields(List<DataObject> fields) {
+
+    Set<String> embeddedFields = new LinkedHashSet<>();
+    if (!CollectionUtils.isEmpty(fields)) {
+      for (DataObject field : fields) {
+        if (Objects.nonNull(field) && StringUtils.isNotBlank(field.getValue())) {
+          String[] parts = field.getValue()
+              .split("\\.");
+          for (int i = 0; i < parts.length - 1; i++) {
+            embeddedFields.add(parts[i]);
+          }
+        }
+      }
+    }
+    return embeddedFields;
+  }
+
+  /**
+   * To build the aggregation.
+   * 
+   * @param aggregationPipeline
+   * @return
+   */
+  private Aggregation buildAggregation(List<AggregationOperation> aggregationPipeline) {
+
+    return Aggregation.newAggregation(aggregationPipeline)
+        .withOptions(AggregationOptions.builder()
+            .allowDiskUse(true)
+            .build());
+  }
+
+  /**
+   * @author Vidhi_s Returns the timestamp/date from the localDate for the duration filter.
+   * 
+   * @param dates
+   * @param isMismatchingTypeField
+   * @return
+   * @throws DashboardException
+   */
+  private List<String> getDateStrings(List<LocalDate> dates, boolean isMismatchingTypeField)
+      throws DashboardException {
+
+    if (CollectionUtils.isEmpty(dates) || dates.size() != 2 || Objects.isNull(dates.get(0))
+        || Objects.isNull(dates.get(1))) {
+      throw new DashboardException("Dates to filter duration must be valid.");
+    }
+    List<String> stringDates = new ArrayList<>();
+    Date startDate = Date.from(dates.get(0)
+        .atStartOfDay(ZoneId.systemDefault())
+        .toInstant());
+    Date endDate = Date.from(dates.get(1)
+        .atStartOfDay(ZoneId.systemDefault())
+        .toInstant());
+    Calendar endDateInstance = Calendar.getInstance();
+    endDateInstance.setTime(endDate);
+    endDateInstance.add(Calendar.DATE, 1);
+    endDateInstance.add(Calendar.MILLISECOND, -1);
+    if (isMismatchingTypeField) {
+      stringDates.add(String.valueOf(startDate.getTime()));
+      stringDates.add(String.valueOf(endDateInstance.getTimeInMillis()));
+    } else {
+      stringDates
+          .add(ErpDateUtil.stringFormatedDate(startDate, DashboardConstants.DATE_TIME_FORMAT));
+      stringDates.add(ErpDateUtil.stringFormatedDate(endDateInstance.getTime(),
+          DashboardConstants.DATE_TIME_FORMAT));
+    }
+    return stringDates;
+  }
+
+  /**
+   * @author Vidhi_s This method is for setting CSV data from the chart result according to the
+   *         chart types.
+   * 
+   * @param type
+   * @param data
+   * @return
+   * @throws IOException
+   */
+  @SuppressWarnings({"deprecation", "unchecked"})
+  public byte[] writeCsvDataForChart(DashboardChartType type, Map<String, Object> data)
+      throws IOException {
+
+    try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        CSVWriter csvWriter = new CSVWriter(new OutputStreamWriter(outputStream))) {
+      // CSVWriter csvWriter = new CSVWriter(new FileWriter("File.csv"))) {
+      String[] columnHeaders = data.keySet()
+          .toArray(new String[0]);
+      List<Map<String, String>> tableData = new ArrayList<Map<String, String>>();
+      if (type.equals(DashboardChartType.BAR) || type.equals(DashboardChartType.LINE)) {
+        columnHeaders = ArrayUtils.add(columnHeaders, 0, "");
+      } else if (type.equals(DashboardChartType.TABLE)) {
+        tableData = (List<Map<String, String>>) data.get(columnHeaders[0]);
+        if (Objects.nonNull(tableData) && !CollectionUtils.isEmpty(tableData)
+            && Objects.nonNull(tableData.get(0))) {
+          columnHeaders = tableData.get(0)
+              .keySet()
+              .toArray(new String[0]);
+        }
+      }
+      csvWriter.writeNext(columnHeaders);
+      if (type.equals(DashboardChartType.BAR) || type.equals(DashboardChartType.LINE)) {
+        Set<String> dates = new HashSet<>();
+        for (Entry<String, Object> entry : data.entrySet()) {
+          dates.addAll(((Map<String, Object>) entry.getValue()).keySet());
+        }
+        List<String> sortedDateHeaders = new ArrayList<>(dates);
+        Collections.sort(sortedDateHeaders);
+        for (String rowHeader : sortedDateHeaders) {
+          String[] row = new String[columnHeaders.length + 1];
+          row[0] = rowHeader;
+          /** Row header */
+          for (int colIndex = 1; colIndex < columnHeaders.length; colIndex++) {
+            String columnHeader = columnHeaders[colIndex];
+            Map<String, Object> columnValues = (Map<String, Object>) data.get(columnHeader);
+            row[colIndex] = columnValues.containsKey(rowHeader) ? columnValues.get(rowHeader)
+                .toString() : "0";
+          }
+          csvWriter.writeNext(row);
+        }
+      } else if (type.equals(DashboardChartType.TABLE)) {
+        for (Map<String, String> dataValue : tableData) {
+          String[] rowData = new String[columnHeaders.length];
+          for (int colIndex = 0; colIndex < columnHeaders.length; colIndex++) {
+            Object cellValue = dataValue.get(columnHeaders[colIndex]);
+            rowData[colIndex] = Objects.nonNull(cellValue) ? String.valueOf(cellValue) : null;
+          }
+          csvWriter.writeNext(rowData);
+        }
+      } else {
+        String[] row = new String[columnHeaders.length];
+        for (int colIndex = 0; colIndex < columnHeaders.length; colIndex++) {
+          String columnHeader = columnHeaders[colIndex];
+          row[colIndex] = Objects.nonNull(data.get(columnHeader)) ? data.get(columnHeader)
+              .toString() : "0";
+        }
+        csvWriter.writeNext(row);
+      }
+      csvWriter.flush();
+      return outputStream.toByteArray();
+    } catch (IOException e) {
+      log.error(LF.format(e.getMessage(), TenantContext.getId()));
+      throw new IOException(e.getMessage());
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public byte[] downloadDashboardCharts(DashboardChart dashboardChart) throws DashboardException {
+
+    try {
+      log.info(LF.format("Inside download Dashboard Chart method.", TenantContext.getId()));
+      Map<String, Object> chartData = null;
+      if (Objects.nonNull(dashboardChart)) {
+        try {
+          chartData = this.executeChart(dashboardChart, null);
+        } catch (DashboardException | ParseException e) {
+          log.error(LF.format("Unable to download the chart as: " + e.getMessage(),
+              TenantContext.getId()));
+          throw new DashboardException("Unable to download the chart as: " + e.getMessage());
+        }
+        if (Objects.nonNull(chartData) && !chartData.isEmpty()) {
+          if (dashboardChart.isStatic() && StringUtils.equals(dashboardChart.getName(),
+              DashboardConstants.INVOICE_AR_AGING)) {
+            chartData.remove(DashboardConstants.TOTAL_ELEMENTS);
+            List<Map<String, Object>> convertedList = new ArrayList<>();
+            for (InvoiceAgingTable agingObject : (List<InvoiceAgingTable>) chartData
+                .get(dashboardChart.getName())) {
+              Map<String, Object> convertedMap = MpsObjectMapper.getInstance()
+                  .convertValue(agingObject, LinkedHashMap.class);
+              Map<String, Object> dueAmountByDays =
+                  (Map<String, Object>) convertedMap.remove("dueAmountByDays");
+              convertedMap.putAll(dueAmountByDays);
+              convertedList.add(convertedMap);
+            }
+            chartData.put(dashboardChart.getName(), convertedList);
+          }
+          return this.writeCsvDataForChart(dashboardChart.getType(), chartData);
+        } else {
+          log.error(
+              LF.format("Could not find the result data for downloading the Chart with Id: {}",
+                  TenantContext.getId()),
+              dashboardChart.getId());
+          throw new DashboardException(
+              "Could not find the result data for downloading the Chart with Id: "
+                  + dashboardChart.getId());
+        }
+      } else {
+        log.error(LF.format("Dashboard Chart must not be empty for downloading the CSV.",
+            TenantContext.getId()));
+        throw new DashboardException("Dashboard Chart must not be empty for downloading the CSV.");
+      }
+    } catch (IOException e) {
+      log.error(LF.format(e.getMessage(), TenantContext.getId()));
+      throw new DashboardException(
+          "Unable to download Dashboard chart/dashlet CSV because of the Error: " + e.getMessage()
+              + ".");
+    }
+  }
+
+  @Override
+  public byte[] downloadDashboardCharts(DashboardChartType chartType, Map<String, Object> chartData)
+      throws DashboardException {
+
+    try {
+      if (Objects.nonNull(chartData) && !chartData.isEmpty()) {
+        return this.writeCsvDataForChart(chartType, chartData);
+      } else {
+        return null;
+      }
+    } catch (IOException e) {
+      log.error(LF.format(e.getMessage(), TenantContext.getId()));
+      throw new DashboardException(
+          "Unable to download Dashboard chart/dashlet CSV because of the Error: " + e.getMessage()
+              + ".");
+    }
+  }
+}

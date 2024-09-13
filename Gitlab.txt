@@ -1,0 +1,28 @@
+A web based DevOps lifecycle tool.
+
+
+Continuos integration
+build test merge
+
+continuous delivery
+automatically release to repository
+
+continuous deplyment
+automatically deploy to production
+
+
+Gitlab runner
+Responsible for running your pipelines, kind of runner
+took a docker container: for the environment, where the job ran
+
+will take time, shared platform, runs on cloud
+also gitlab runner is shared
+
+What if any test is unsucessful: other tests are skipped
+can run manually.
+
+File will be removed automatically after job completion
+how to preserve it
+
+Gitlab default variables. - written in documentation, search for it.
+Predefined CI/CD variables

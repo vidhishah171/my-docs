@@ -1,0 +1,23 @@
+Design Patterns:
+
+1. Factory:
+2. Builder:
+3. Singleton: Only have One instance that's instantiated. Single copy of application state. : Shared resource
+4. Iterator
+5. Strategy
+6. Adapter
+7. Facade: Arraylist, Vector: internally resizes.
+
+Crational Patterns: Way of creating object
+Factory : Create a factory class, which is responsible for creating an object. Virtual Constructor. Don't expose the creation logic to client and refer the created object using a standard interface.
+Abstract Factory: Factory of Factory, One Producer, Obne abstract factory, two factories. First get factory, then get instance.
+Builder
+Prototype
+Singleton: Create private static instance = new Instance();
+Make constructor private.
+and create static getInstance() method and return instance, if not present, create a new instance. : Eager one.
+
+
+Behavioral Patterns
+Structural Patterns
+

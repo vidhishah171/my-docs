@@ -1,0 +1,62 @@
+package com.mrps.udsreportingservice.report.entities;
+
+import java.util.Date;
+
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Table;
+
+import org.hibernate.annotations.ColumnTransformer;
+
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.mrps.core.util.CustomDateDeserializer;
+
+import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * Project uds-reporting-service
+ * 
+ * @author VedangD
+ * @version 1.0
+ * @date 12-Aug-2022
+ */
+@Getter
+@Setter
+@Entity
+@Table(name = "report_drill_down_data_test")
+public class ReportDrillDownData {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.TABLE)
+  private int id;
+
+  @ColumnTransformer(forColumn = "report", read = "pgp_sym_decrypt(report, '${encryption.key}')",
+      write = "pgp_sym_encrypt(?, '${encryption.key}')")
+  @Column(name = "report", columnDefinition = "bytea")
+  private String report;
+
+  @ColumnTransformer(forColumn = "line", read = "pgp_sym_decrypt(line, 'password')",
+      write = "pgp_sym_encrypt(?, 'password')")
+  @Column(name = "line", columnDefinition = "bytea")
+  private String line;
+
+  private String cmsMeasure;
+
+  private String observation;
+
+  private String criteria;
+
+  private String keywords;
+
+  private String observation_data;
+
+  @JsonDeserialize(using = CustomDateDeserializer.class)
+  @ColumnTransformer(forColumn = "testDate", read = "pgp_sym_decrypt(testDate, 'password')",
+      write = "pgp_sym_encrypt(to_char(?::date,'yyyy-MM-dd HH24:mi:ss'),'password')")
+  @Column(name = "testDate", columnDefinition = "bytea")
+  private Date testDate;
+}

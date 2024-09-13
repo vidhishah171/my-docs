@@ -1,0 +1,537 @@
+Query: { "invoiceItems" : { "$elemMatch" : { "_id" : { "$in" : ["6613ab8cd3ad38a418517736"] }, "$and" : [{ "manualInvoiceConfig" : { "$exists" : true }, "$and" : [{ "manualInvoiceConfig.latestManualInvoice" : true, "$and" : [{ "_id" : "6613abc1d3ad38a418518b0a" }] }] }] } } }, Fields: { }, Sort: { }
+
+
+Query: { "invoiceItems" : { "$elemMatch" : { "_id" : { "$in" : ["6613ab8cd3ad38a418517736"] }, "$and" : [{ "manualInvoiceConfig" : { "$exists" : true }, "$and" : [{ "manualInvoiceConfig.latestManualInvoice" : true }] }] } }, "$and" : [{ "_id" : "6613abc1d3ad38a418518b0a" }] }, Fields: { }, Sort: { }
+
+
+Query: { "invoiceItems" : { "$elemMatch" : { "_id" : { "$in" : ["6613ab8cd3ad38a418517736"] }, "$and" : [{ "manualInvoiceConfig" : { "$exists" : true }, "$and" : [{ "manualInvoiceConfig.latestManualInvoice" : true }] }] } }, "$and" : [{ "_id" : "6613abc1d3ad38a418518b0a" }] }, Fields: { }, Sort: { }
+
+
+
+Query: { "invoiceItem" : { "$elemMatch" : { "_id" : { "$in" : ["6613c9c6d3ad38b188375802"] }, "$and" : [{ "manualInvoiceConfig" : { "$exists" : true }, "$and" : [{ "manualInvoiceConfig.latestManualInvoice" : true }] }] } }, "$and" : [{ "_id" : "6613c9c7d3ad38b18837580c" }] }, Fields: { }, Sort: { }
+
+
+  public void disableRecurringForInvoiceItems(String invoiceId, List<String> invoiceItemIdList,
+      String fieldToDisable, Class<?> clazz) throws InvoiceException {
+
+    String parentFieldName = (clazz == PreInvoice.class) ? "invoiceItem." : "invoiceItems.";
+    String arrayOperator = (clazz == PreInvoice.class) ? "" : "$.";
+    Update update = new Update();
+    update.set(parentFieldName + arrayOperator + "manualInvoiceConfig." + fieldToDisable, false);
+    update.set(parentFieldName + arrayOperator + BooksServiceConstant.UPDATED_DATE, new Date());
+    update.set(parentFieldName + arrayOperator + BooksServiceConstant.UPDATED_BY,
+        this.mpsSecurityAuditAware.getCurrentAuditor()
+            .get());
+    String[] s = parentFieldName.split("\\.");
+    Query query = new Query().addCriteria(new Criteria().and(parentFieldName.split("\\.")[0])
+        .elemMatch(Criteria.where(BooksServiceConstant.ID)
+            .in(invoiceItemIdList)
+            .andOperator(Criteria.where("manualInvoiceConfig")
+                .exists(true)
+                .andOperator(Criteria.where("manualInvoiceConfig." + fieldToDisable)
+                    .is(true))))
+        // .andOperator(Criteria.where(BooksServiceConstant.ID)
+        // .is(invoiceId))
+        .andOperator(Criteria.where(BooksServiceConstant.ID)
+            .is(invoiceId)));
+    UpdateResult updatedResult = this.mongoOperations.updateMulti(query, update, clazz);
+    if (updatedResult.getModifiedCount() == 0) {
+      log.info(LF.format(
+          "Error while disabling recurring for InvoiceI.tems {} for the invoice/pre-invoice: {}",
+          TenantContext.getId()), invoiceItemIdList, invoiceId);
+      throw new InvoiceException("Error while disabling recurring for InvoiceItems "
+          + invoiceItemIdList + " for the invoice/pre-invoice: " + invoiceId);
+    }
+  }
+  
+  
+  
+  
+  
+    public List<Invoice> findManualInvoicesForRecurring(LocalDate manualDate) {
+
+    Date manualDateConverted = Date.from(manualDate.atStartOfDay(ZoneId.systemDefault())
+        .toInstant());
+    Criteria criteria = new Criteria().andOperator(
+        Criteria.where("invoiceItems.manualInvoiceConfig.recurringInvoice")
+            .is(true),
+        Criteria.where("invoiceItems.manualInvoiceConfig.latestManualInvoice")
+            .is(true),
+        Criteria.where("invoiceItems.manualInvoiceConfig.invoiceNextBillingDate")
+            .is(manualDate),
+        Criteria.where("invoiceItems.itemType")
+            .is(BooksServiceConstant.ItemType.PREMANUAL));
+    Aggregation aggregation = Aggregation.newAggregation(Aggregation.match(criteria), Aggregation
+        .project("_id", "invoiceItems", "customerId", "customerName", "customerNumber",
+            "customerDisplayName")
+        .and(ArrayOperators.Filter.filter("invoiceItems")
+            .as("item")
+            .by(BooleanOperators.And.and(
+                ComparisonOperators.Eq.valueOf("item.manualInvoiceConfig.recurringInvoice")
+                    .equalToValue(true),
+                ComparisonOperators.Eq.valueOf("item.manualInvoiceConfig.latestManualInvoice")
+                    .equalToValue(true),
+                ComparisonOperators.Eq.valueOf("item.manualInvoiceConfig.invoiceNextBillingDate")
+                    .equalToValue(manualDateConverted))))
+        .as("invoiceItems"));
+    AggregationResults<Invoice> results =
+        mongoTemplate.aggregate(aggregation, BooksEntities.INVOICE, Invoice.class);
+    return results.getMappedResults();
+  }
+
+  @Override
+  public void disableRecurringForInvoiceItems(String invoiceId, List<String> invoiceItemIdList,
+      String fieldToDisable, Class<?> clazz) throws InvoiceException {
+
+    String parentFieldName = (clazz == PreInvoice.class) ? "invoiceItem." : "invoiceItems.";
+    String arrayOperator = (clazz == PreInvoice.class) ? "" : "$.";
+    Update update = new Update();
+    update.set(parentFieldName + arrayOperator + "manualInvoiceConfig." + fieldToDisable, false);
+    update.set(parentFieldName + arrayOperator + BooksServiceConstant.UPDATED_DATE, new Date());
+    update.set(parentFieldName + arrayOperator + BooksServiceConstant.UPDATED_BY,
+        this.mpsSecurityAuditAware.getCurrentAuditor()
+            .get());
+    Query query = (clazz == PreInvoice.class)
+        ? new Query().addCriteria(new Criteria().andOperator(
+            Criteria.where(parentFieldName + BooksServiceConstant.ID)
+                .in(invoiceItemIdList),
+            Criteria.where(parentFieldName + "manualInvoiceConfig")
+                .exists(true),
+            Criteria.where(parentFieldName + "manualInvoiceConfig." + fieldToDisable)
+                .is(true),
+            Criteria.where(BooksServiceConstant.ID)
+                .is(invoiceId)))
+        : new Query().addCriteria(new Criteria().and(parentFieldName.split("\\.")[0])
+            .elemMatch(Criteria.where(BooksServiceConstant.ID)
+                .in(invoiceItemIdList)
+                .andOperator(Criteria.where("manualInvoiceConfig")
+                    .exists(true)
+                    .andOperator(Criteria.where("manualInvoiceConfig." + fieldToDisable)
+                        .is(true))))
+            .andOperator(Criteria.where(BooksServiceConstant.ID)
+                .is(invoiceId)));
+    UpdateResult updatedResult = this.mongoOperations.updateMulti(query, update, clazz);
+    if (updatedResult.getModifiedCount() == 0) {
+      log.info(LF.format(
+          "Error while disabling recurring for InvoiceItems {} for the invoice/pre-invoice: {}",
+          TenantContext.getId()), invoiceItemIdList, invoiceId);
+      throw new InvoiceException("Error while disabling recurring for InvoiceItems "
+          + invoiceItemIdList + " for the invoice/pre-invoice: " + invoiceId);
+    }
+  }
+  
+  
+            if (!StringUtils.equals("5f05bf35f1fd1030b4acb4fa", tenant)) {
+            return;
+          }
+		  
+		  
+		  
+		  org.springframework.web.client.RestClientException: Error while extracting response for type [java.util.List<java.lang.Object>] and content type [application/json;charset=utf-8]; nested exception is org.springframework.http.converter.HttpMessageNotReadableException: JSON parse error: Cannot deserialize instance of `java.util.ArrayList` out of START_OBJECT token; nested exception is com.fasterxml.jackson.databind.exc.MismatchedInputException: Cannot deserialize instance of `java.util.ArrayList` out of START_OBJECT token
+
+
+
+
+
+
+  private void validateInvoiceCustomFieldConfig(InvoiceCustomFieldConfig customFieldConfig,
+      String configId, String invoiceConfigId) throws ConfigurationException {
+
+    if (CollectionUtils.isEmpty(customFieldConfig.getCustomFields())
+        || customFieldConfig.getCustomFields()
+            .stream()
+            .anyMatch(field -> !StringUtils.equalsAny(field,
+                BooksServiceConstant.InvoiceCustomField.EMPLOYEE_NAME,
+                BooksServiceConstant.InvoiceCustomField.ORDER_NUMBER))) {
+      String errorMsg = "Invoice Custom Field List must have valid elements when it's enabled.";
+      log.error(LF.format(errorMsg, TenantContext.getId()));
+      throw new ConfigurationException("Unable to update Invoice Config with id: " + invoiceConfigId
+          + " inside Configuration Object with id: " + configId + " for TenantId: "
+          + TenantContext.getId() + " as " + errorMsg);
+    }
+  }
+        // if (invoiceConfig.getInvoiceCustomFieldConfig()
+      // .isCustomFieldEnabled()) {
+      // this.validateInvoiceCustomFieldConfig(invoiceConfig.getInvoiceCustomFieldConfig(),
+      // configId,
+      // invoiceConfig.getId());
+      // }
+	  
+	  
+	  
+	  package com.mps.books.model.config;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+/**
+ * Project mps-books-service
+ * 
+ * @author Vidhi_s
+ * @version 1.0
+ * @date May 2, 2024
+ */
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+public class InvoiceCustomFieldConfig {
+
+  private boolean customFieldEnabled = false;
+
+  /** Fields to show in manual invoice. */
+  private List<String> customFields = new ArrayList<>();
+}
+
+
+  // public class InvoiceCustomField {
+
+  //   private InvoiceCustomField() {
+
+  //     throw new IllegalStateException("Utility class");
+  //   }
+
+  //   public static final String ORDER_NUMBER = "Order Number";
+
+  //   public static final String EMPLOYEE_NAME = "Employee Name";
+  // }
+  
+  
+{
+  "id" : "664c8b968ef83c0001e870a0",
+  "createdDate" : "2024-05-21T11:55:02.443+0000",
+  "createdBy" : "vidhi.s@meditab.com",
+  "updatedDate" : "2024-05-21T11:55:02.465+0000",
+  "updatedBy" : "vidhi.s@meditab.com",
+  "active" : true,
+  "deleted" : false,
+  "labels" : { },
+  "metadata" : { },
+  "tags" : [ ],
+  "customerId" : "664c50378ef83c0001e6cb8f",
+  "customerName" : "Meditab Software",
+  "customerNumber" : "CS-4703",
+  "meditabId" : "111122",
+  "customerDisplayName" : null,
+  "customerEmail" : "vidhi.s@meditab.com",
+  "subscriptionId" : null,
+  "voidedAt" : null,
+  "status" : "Approved",
+  "comments" : [ ],
+  "invoiceItems" : [ {
+    "id" : "664c8b8e8ef83c0001e86f45",
+    "createdDate" : "2024-05-21T11:54:54.871+0000",
+    "createdBy" : null,
+    "updatedDate" : null,
+    "updatedBy" : null,
+    "active" : true,
+    "deleted" : false,
+    "name" : "Refund",
+    "planId" : null,
+    "addonId" : null,
+    "itemType" : "PreManual",
+    "subscriptionId" : null,
+    "customerId" : "664c50378ef83c0001e6cb8f",
+    "customerName" : "Meditab Software",
+    "customerNumber" : "CS-4703",
+    "meditabId" : "111122",
+    "parentCustomerId" : null,
+    "unitAmount" : 999,
+    "pricingBrackets" : [ ],
+    "quantity" : 40,
+    "amount" : 39960,
+    "freeQuantity" : 0,
+    "billingMultiplier" : 1,
+    "totalBillingQuantities" : 40,
+    "baseFee" : 0,
+    "initialBaseFee" : null,
+    "initialUsageToConsider" : 0,
+    "billingFrom" : "2024-05-20",
+    "billingTo" : "2024-11-19",
+    "setupCost" : 0,
+    "planType" : "Unit",
+    "unitOfMesurement" : "Quantity",
+    "additionalUnitCost" : 39960,
+    "additionalLineItems" : [ ],
+    "qbLineItems" : [ {
+      "id" : "664c8b8e8ef83c0001e86f46",
+      "createdDate" : "2024-05-21T11:54:54.871+0000",
+      "createdBy" : null,
+      "updatedDate" : null,
+      "updatedBy" : null,
+      "active" : true,
+      "deleted" : false,
+      "name" : "Refund",
+      "description" : "143",
+      "quantity" : 40,
+      "unitPrice" : 999,
+      "price" : 39960,
+      "category" : "unitPrice"
+    } ],
+    "productName" : null,
+    "productId" : null,
+    "taxAmount" : 0,
+    "totalTaxRate" : 0,
+    "taxable" : false,
+    "taxes" : [ ],
+    "taxPercentage" : 0,
+    "qbPlanConfig" : {
+      "qbInvLineItemConfigs" : [ ],
+      "invFields" : {
+        "className" : "Service",
+        "template" : "Invoice template1",
+        "paymentTerm" : null,
+        "memo" : null,
+        "account" : "Room Income"
+      },
+      "creditNoteFields" : {
+        "className" : null,
+        "template" : null,
+        "arAccount" : null
+      },
+      "required" : true
+    },
+    "manualInvoiceConfig" : {
+      "recurringInvoice" : false,
+      "manualInvoiceBillConfig" : null,
+      "latestManualInvoice" : false,
+      "invoiceNextBillingDate" : null,
+      "maxRecurringFreqForDiscount" : 0,
+      "currentFreqOfDiscount" : 0,
+      "invoiceActualNextBillingDate" : null,
+      "lineItemFrequency" : 0
+    },
+    "additionalDescription" : null,
+    "discountId" : null,
+    "discountPrice" : 0,
+    "initialDiscountAmount" : null,
+    "discountType" : null,
+    "billingType" : null,
+    "orderNumber" : null,
+    "employeeName" : null
+  }, {
+    "id" : "664c50442e62f03b5c2f7354",
+    "createdDate" : "2024-05-21T07:41:56.510+0000",
+    "createdBy" : null,
+    "updatedDate" : null,
+    "updatedBy" : null,
+    "active" : true,
+    "deleted" : false,
+    "name" : "143",
+    "planId" : null,
+    "addonId" : null,
+    "itemType" : "PreManual",
+    "subscriptionId" : null,
+    "customerId" : "664c50378ef83c0001e6cb8f",
+    "customerName" : null,
+    "customerNumber" : "CS-4703",
+    "meditabId" : "111122",
+    "parentCustomerId" : null,
+    "unitAmount" : 999,
+    "pricingBrackets" : [ ],
+    "quantity" : 40,
+    "amount" : 39160.8,
+    "freeQuantity" : 0,
+    "billingMultiplier" : 1,
+    "totalBillingQuantities" : 40,
+    "baseFee" : 0,
+    "initialBaseFee" : null,
+    "initialUsageToConsider" : 0,
+    "billingFrom" : "2024-05-20",
+    "billingTo" : "2024-11-19",
+    "setupCost" : null,
+    "planType" : "Unit",
+    "unitOfMesurement" : "Quantity",
+    "additionalUnitCost" : 39160.8,
+    "additionalLineItems" : [ ],
+    "qbLineItems" : [ {
+      "id" : "664c50442e62f03b5c2f7355",
+      "createdDate" : "2024-05-21T07:41:56.510+0000",
+      "createdBy" : null,
+      "updatedDate" : null,
+      "updatedBy" : null,
+      "active" : true,
+      "deleted" : false,
+      "name" : "143",
+      "description" : "143",
+      "quantity" : 40,
+      "unitPrice" : 999,
+      "price" : 39160.8,
+      "category" : "unitPrice"
+    } ],
+    "productName" : null,
+    "productId" : null,
+    "taxAmount" : 0,
+    "totalTaxRate" : 0,
+    "taxable" : true,
+    "taxes" : [ ],
+    "taxPercentage" : 0,
+    "qbPlanConfig" : {
+      "qbInvLineItemConfigs" : [ ],
+      "invFields" : {
+        "className" : null,
+        "template" : null,
+        "paymentTerm" : null,
+        "memo" : null,
+        "account" : null
+      },
+      "creditNoteFields" : {
+        "className" : null,
+        "template" : null,
+        "arAccount" : null
+      },
+      "required" : true
+    },
+    "manualInvoiceConfig" : {
+      "recurringInvoice" : true,
+      "manualInvoiceBillConfig" : {
+        "dueAfterDays" : 0,
+        "period" : 6,
+        "unit" : "Month"
+      },
+      "latestManualInvoice" : true,
+      "invoiceNextBillingDate" : "2024-11-20",
+      "maxRecurringFreqForDiscount" : 0,
+      "currentFreqOfDiscount" : 0,
+      "invoiceActualNextBillingDate" : "2024-05-20",
+      "lineItemFrequency" : -1
+    },
+    "additionalDescription" : null,
+    "discountId" : null,
+    "discountPrice" : 0,
+    "initialDiscountAmount" : null,
+    "discountType" : null,
+    "billingType" : null,
+    "orderNumber" : null,
+    "employeeName" : null
+  } ],
+  "billingAddress" : {
+    "id" : "664c50378ef83c0001e6cb8e",
+    "createdDate" : "2024-05-21T07:41:43.347+0000",
+    "createdBy" : null,
+    "updatedDate" : null,
+    "updatedBy" : null,
+    "active" : true,
+    "deleted" : false,
+    "display" : "",
+    "address1" : "abchds",
+    "address2" : "",
+    "city" : "Adona",
+    "state" : "Arkansas",
+    "zip" : "72001",
+    "country" : "United States",
+    "countryCode" : "USA",
+    "primary" : false,
+    "type" : "Home",
+    "stateCode" : "AR"
+  },
+  "shippingAddress" : {
+    "id" : "664c50378ef83c0001e6cb8e",
+    "createdDate" : "2024-05-21T07:41:43.347+0000",
+    "createdBy" : null,
+    "updatedDate" : null,
+    "updatedBy" : null,
+    "active" : true,
+    "deleted" : false,
+    "display" : "",
+    "address1" : "abchds",
+    "address2" : "",
+    "city" : "Adona",
+    "state" : "Arkansas",
+    "zip" : "72001",
+    "country" : "United States",
+    "countryCode" : "USA",
+    "primary" : false,
+    "type" : "Home",
+    "stateCode" : "AR"
+  },
+  "mailNotificationTo" : [ "vidhi.s@meditab.com" ],
+  "currencyCode" : null,
+  "currencySymbol" : "$",
+  "sentTime" : null,
+  "forVar" : true,
+  "organization" : {
+    "email" : "rutup@meditab.com",
+    "phone" : [ "(111) 111-1114" ],
+    "display" : "aa",
+    "address1" : "aa",
+    "address2" : "aa",
+    "city" : "Bay Point",
+    "state" : "California",
+    "zip" : "94565",
+    "country" : "United States",
+    "countryCode" : "US",
+    "website" : "www.mghostingservices.com",
+    "logoUrl" : "https://firebasestorage.googleapis.com/v0/b/erp-dev-data/o/erp%2Fconfigurations%2F641a983164c4d3432c17033f%2FInvoice_Logo_1679985645304?alt=media&token=c1d4fb94-82d3-43e0-9a36-e54febce5d07",
+    "invoiceNote" : ""
+  },
+  "templateIdentifier" : "Meditab Id",
+  "invoiceNumber" : "MS24-05131",
+  "invoiceDate" : "2024-05-21",
+  "invoiceDueDate" : "2024-06-07",
+  "approvedDate" : "2024-05-21",
+  "billedAmount" : 79120.80,
+  "paidAmount" : 0,
+  "paidDate" : null,
+  "firstInvoice" : true,
+  "preferredPaymentMode" : "",
+  "autoCharge" : false,
+  "cardId" : null,
+  "accountId" : null,
+  "creditsApplied" : 0,
+  "writeOffAmount" : 0,
+  "billingFrom" : null,
+  "billingTo" : null,
+  "adjustmentsCreated" : [ ],
+  "adjustments" : [ ],
+  "transactions" : [ ],
+  "statusLogs" : [ ],
+  "totalTaxAmount" : 0,
+  "totalAmount" : 79120.80,
+  "adjustedAmount" : 0,
+  "dueAmount" : 79120.80,
+  "upfront" : false,
+  "invoiceType" : "PreInvoice",
+  "manualInvoiceConfig" : {
+    "recurringInvoice" : false,
+    "manualInvoiceBillConfig" : null,
+    "latestManualInvoice" : false,
+    "invoiceNextBillingDate" : null,
+    "maxRecurringFreqForDiscount" : 0,
+    "currentFreqOfDiscount" : 0,
+    "invoiceActualNextBillingDate" : null,
+    "lineItemFrequency" : 0
+  },
+  "overdueInvoice" : {
+    "attemptsForOverdueEmail" : 0,
+    "adminNotified" : false,
+    "nextOverdueEmailDate" : null
+  },
+  "payeeLineItems" : null,
+  "remainingAmount" : 79120.80,
+  "nextLateFeeApplicableDate" : null,
+  "totalDiscount" : 0,
+  "initialDiscountAmountForManualInvoice" : null,
+  "discountApplied" : false,
+  "payeeAtInvoice" : false,
+  "rulesForPayeeAtInvoice" : null,
+  "applyRulesFrom" : "Customer",
+  "billingMultiplierForInvoice" : 0,
+  "paymentDate" : "2024-05-26",
+  "defaultQbClass" : false,
+  "defaultQbAccount" : false,
+  "_links" : {
+    "self" : {
+      "href" : "http://devapi.medpharmservices.com/erp/invoices/664c8b968ef83c0001e870a0"
+    },
+    "invoice" : {
+      "href" : "http://devapi.medpharmservices.com/erp/invoices/664c8b968ef83c0001e870a0{?projection}",
+      "templated" : true
+    }
+  }
+}  
